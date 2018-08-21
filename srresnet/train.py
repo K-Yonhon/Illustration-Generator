@@ -73,7 +73,7 @@ x_label = np.load("../DCGAN/face_tag.npy").astype(np.float32)
 #print(x_train.shape)
 #Ntrain, channels, width, height = x_train.shape
 _, dims = x_label.shape
-image_path = "/usr/MachineLearning/Dataset/face_illustration/face_getchu/"
+image_path = "../DCGAN/face_getchu/"
 Ntrain = 25000
 channels = 3
 width = 128
@@ -85,7 +85,7 @@ if not os.path.exists(image_dir):
 
 generator = Generator()
 generator.to_gpu()
-gen_opt = set_optimizer(generator, alpha = 0.00015)
+gen_opt = set_optimizer(generator, alpha = 0.0002)
 #serializers.load_npz("generator.model_getchu", generator)
 
 discriminator = Discriminator()
