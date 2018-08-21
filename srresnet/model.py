@@ -2,8 +2,10 @@ import chainer
 import chainer.links as L
 import chainer.functions as F
 from chainer import Chain, cuda, Variable
-from sn_net import SNLinear, SNConvolution2D
+from sn_net import SNLinear, SNConvolution2D, SNDeconvolution2D
 import numpy as np
+
+xp = cuda.cupy
 
 def pixel_shuffler(out_ch, x, r = 2):
     b, c, w, h = x.shape
@@ -24,11 +26,12 @@ class CBR(Chain):
         with self.init_scope():
             self.c0 = L.Convolution2D(in_ch, out_ch, 3,1,1, initialW = w)
 
-            self.bn0 = L.BatchNormalization(int(out_ch/4))
+            self.bn0 = L.BatchNormalization(int(out_ch))
 
     def __call__(self,x):
-        h = self.c0(x)
-        h = pixel_shuffler(self.out_ch, h)
+        h = F.unpooling_2d(x,2,2 )
+        h = self.c0(h)
+        #h = pixel_shuffler(self.out_ch, h)
 
         if self.bn:
             h = self.bn0(h)
@@ -52,6 +55,8 @@ class Gen_ResBlock(Chain):
     def __call__(self,x):
         h = F.relu(self.bn0(self.c0(x)))
         h = self.bn1(self.c1(h))
+        #h = F.relu(self.c0(x))
+        #h = self.c1(h)
 
         return h + x
 
@@ -60,15 +65,15 @@ class Dis_ResBlock(Chain):
         super(Dis_ResBlock, self).__init__()
         w = chainer.initializers.Normal(0.02)
         with self.init_scope():
-            self.c0 = SNConvolution2D(in_ch, out_ch, 3,1,1, initialW = w)
-            self.c1 = SNConvolution2D(out_ch, out_ch, 3,1,1, initialW = w)
+            self.c0 = L.Convolution2D(in_ch, out_ch, 3,1,1, initialW = w)
+            self.c1 = L.Convolution2D(out_ch, out_ch, 3,1,1, initialW = w)
 
             self.bn0 = L.BatchNormalization(out_ch)
             self.bn1 = L.BatchNormalization(out_ch)
     
     def __call__(self,x):
-        h = F.leaky_relu(self.bn0(self.c0(x)))
-        h = self.bn1(self.c1(h))
+        h = F.leaky_relu(self.c0(x))
+        h = self.c1(h)
         h = h + x
         h = F.leaky_relu(h)
 
@@ -81,26 +86,28 @@ class Generator(Chain):
         w = chainer.initializers.Normal(0.02)
         with self.init_scope():
 
-            self.l0 = L.Linear(128+34, base*8*8, initialW = w)
+            self.l0 = L.Linear(128+34, base*16*16, initialW = w)
             self.r0 = Gen_ResBlock(base, base)
             self.r1 = Gen_ResBlock(base, base)
             self.r2 = Gen_ResBlock(base, base)
             self.c0 = L.Convolution2D(base,base,3,1,1,initialW = w)
-            self.cbr0 = CBR(base, base*4)
-            self.cbr1 = CBR(base, base*4)
-            self.cbr2 = CBR(base, base*4)
+            self.cbr0 = CBR(base, base)
+            self.cbr1 = CBR(base, base)
+            self.cbr2 = CBR(base, base)
             self.c1 = L.Convolution2D(base, 3, 9, 1, 4, initialW = w)
 
-            self.bn0 = L.BatchNormalization(64*8*8)
+            self.bn0 = L.BatchNormalization(base*16*16)
             self.bn1 = L.BatchNormalization(base)
 
     def __call__(self,x):
         b, _ = x.shape
-        h1 = F.reshape(F.relu(self.bn0(self.l0(x))), (b, 64, 8,8))
+        h1 = F.reshape(F.relu(self.bn0(self.l0(x))), (b, 64, 16,16))
+        #h1 = F.reshape(F.relu(self.l0(x)), (b,64,16,16))
         h = self.r0(h1)
         h = self.r1(h)
         h = self.r2(h)
         h = h1 + F.relu(self.bn1(self.c0(h)))
+        #h = h1 + F.relu(self.c0(h))
         h = self.cbr0(h)
         h = self.cbr1(h)
         h = self.cbr2(h)
@@ -109,28 +116,28 @@ class Generator(Chain):
         return h
 
 class Discriminator(Chain):
-    def __init__(self,base = 32):
+    def __init__(self,base = 16):
         super(Discriminator, self).__init__()
         w = chainer.initializers.Normal(0.02)
         with self.init_scope():
-            self.c0 = SNConvolution2D(3,base,4,2,1,initialW = w)
+            self.c0 = L.Convolution2D(3,base,4,2,1,initialW = w)
             self.r0 = Dis_ResBlock(base,base)
             self.r1 = Dis_ResBlock(base,base)
-            self.c1 = SNConvolution2D(base,base*2,4,2,1,initialW = w)
+            self.c1 = L.Convolution2D(base,base*2,4,2,1,initialW = w)
             self.r2 = Dis_ResBlock(base*2,base*2)
             self.r3 = Dis_ResBlock(base*2,base*2)
-            self.c2 = SNConvolution2D(base*2,base*4,4,2,1,initialW = w)
+            self.c2 = L.Convolution2D(base*2,base*4,4,2,1,initialW = w)
             self.r4 = Dis_ResBlock(base*4,base*4)
             self.r5 = Dis_ResBlock(base*4,base*4)
-            self.c3 = SNConvolution2D(base*4, base*8, 3,2,1,initialW = w)
+            self.c3 = L.Convolution2D(base*4, base*8, 3,2,1,initialW = w)
             self.r6 = Dis_ResBlock(base*8, base*8)
             self.r7 = Dis_ResBlock(base*8, base*8)
-            self.c4 = SNConvolution2D(base*8, base*16, 3,2,1,initialW = w)
-            #self.r8 = Dis_ResBlock(base*16, base*16)
-            #elf.r9 = Dis_ResBlock(base*16, base*16)
-            #self.c5 = L.Convolution2D(base*16, base*32, 3,2,1,initialW = w)
-            self.l0 = SNLinear(512*2*2,1)
-            self.lcls = SNLinear(512*2*2, 34, initialW = w)
+            self.c4 = L.Convolution2D(base*8, base*16, 3,2,1,initialW = w)
+            self.r8 = Dis_ResBlock(base*16, base*16)
+            self.r9 = Dis_ResBlock(base*16, base*16)
+            self.c5 = L.Convolution2D(base*16, base*32, 3,2,1,initialW = w)
+            self.l0 = L.Linear(128*4*4,1, initialW = w)
+            self.lcls = L.Linear(128*4*4, 34, initialW = w)
 
             self.bn0 = L.BatchNormalization(base)
             self.bn1 = L.BatchNormalization(base*2)
@@ -140,6 +147,8 @@ class Discriminator(Chain):
             self.bn5 = L.BatchNormalization(base*32)
     
     def __call__(self,x):
+        b,c,w,h = x.shape
+        x = x + Variable(xp.random.normal(loc=0.0, scale = 0.1, size =(b,c,w,h), dtype = xp.float32))
         h = F.leaky_relu(self.c0(x))
         h = self.r0(h)
         h = self.r1(h)
@@ -153,9 +162,9 @@ class Discriminator(Chain):
         h = self.r6(h)
         h = self.r7(h)
         h = F.leaky_relu(self.c4(h))
-        #h = self.r8(h)
-        #h = self.r9(h)
-        #h = F.leaky_relu(self.bn5(self.c5(h)))
+        h = self.r8(h)
+        h = self.r9(h)
+        h = F.leaky_relu(self.c5(h))
         h_cls = self.lcls(h)
         h = self.l0(h)
 

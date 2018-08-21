@@ -8,6 +8,7 @@ import pylab
 import argparse
 from model import Generator, Discriminator
 import math
+from preparing import prepare_dataset
 
 xp = cuda.cupy
 cuda.get_device(0).use()
@@ -36,8 +37,8 @@ def get_fake_tag_batch(batchsize, dims, threshold):
         
     return tags
 
-def set_optimizer(model, alpha=0.00002, beta=0.5):
-    optimizer = optimizers.Adam(alpha = alpha, beta1 = beta)
+def set_optimizer(model, alpha=0.0002, beta=0.5):
+    optimizer = optimizers.Adam(alpha = alpha, beta1 = beta, beta2 = 0.99)
     optimizer.setup(model)
 
     return optimizer
@@ -51,8 +52,8 @@ def loss_func_dcgan_dis_fake(h):
 parser = argparse.ArgumentParser(description="SRResNet")
 parser.add_argument("--epoch", default=1000, type=int, help="the number of epochs")
 parser.add_argument("--batchsize", default=100, type=int, help="batch size")
-parser.add_argument("--interval", default=10, type=int, help="the interval of snapshot")
-parser.add_argument("--lam1", default=10.0, type=float, help="the weight of gradient penalty")
+parser.add_argument("--interval", default=1, type=int, help="the interval of snapshot")
+parser.add_argument("--lam1", default=0.5, type=float, help="the weight of gradient penalty")
 parser.add_argument("--lam2", default=34.0 , type=float, help="the weight of adversarial loss")
 parser.add_argument("--type", default = None, help ="select Normal or RaGAN")
 parser.add_argument("--thre", default = 0.75, type = float, help = "threshold")
@@ -67,11 +68,16 @@ gan_type = args.type
 threshold = args.thre
 wid = int(math.sqrt(batchsize))
 
-x_train = np.load("../DCGAN/face_getchu.npy").astype(np.float32)
+#x_train = np.load("../DCGAN/face_getchu.npy").astype(np.float32)
 x_label = np.load("../DCGAN/face_tag.npy").astype(np.float32)
-print(x_train.shape)
-Ntrain, channels, width, height = x_train.shape
+#print(x_train.shape)
+#Ntrain, channels, width, height = x_train.shape
 _, dims = x_label.shape
+image_path = "/usr/MachineLearning/Dataset/face_illustration/face_getchu/"
+Ntrain = 25000
+channels = 3
+width = 128
+height = 128
 
 image_dir = "./output/"
 if not os.path.exists(image_dir):
@@ -79,13 +85,15 @@ if not os.path.exists(image_dir):
 
 generator = Generator()
 generator.to_gpu()
-gen_opt = set_optimizer(generator, alpha=0.0002, beta=0.5)
+gen_opt = set_optimizer(generator, alpha = 0.00015)
+#serializers.load_npz("generator.model_getchu", generator)
 
 discriminator = Discriminator()
 discriminator.to_gpu()
-dis_opt = set_optimizer(discriminator)
+dis_opt = set_optimizer(discriminator, alpha = 0.0002)
+#serializers.load_npz('discriminator_getchu.model', discriminator)
 
-zvis = xp.random.uniform(-1,1,(batchsize,128),dtype=xp.float32)
+zvis = xp.random.normal(size=(batchsize,128),dtype=xp.float32)
 ztag = cuda.to_gpu(get_fake_tag_batch(batchsize, dims, threshold))
 zenter = F.concat([Variable(zvis), Variable(ztag)])
 
@@ -93,17 +101,23 @@ for epoch in range(epochs):
     sum_dis_loss = np.float32(0)
     sum_gen_loss = np.float32(0)
     for batch in range(0,Ntrain,batchsize):
-        x_dis = np.zeros((batchsize,channels,width,height), dtype=np.float32)
         t_dis = np.zeros((batchsize, dims), dtype = np.float32)
+        #x_dis = np.zeros((batchsize,channels,width,height), dtype=np.float32)
+        image_box = []
         for j in range(batchsize):
             rnd = np.random.randint(Ntrain)
-            x_dis[j,:,:,:] = x_train[rnd]
+            image_name = "eroge_" + str(rnd+1) + ".png"
+            image = prepare_dataset(image_path + image_name)
+            image_box.append(image)
             t_dis[j,:] = x_label[rnd]
 
+        x_dis = np.array(image_box).astype(np.float32)
+
         x_dis = cuda.to_gpu(x_dis)
+        x_real = x_dis
         t_dis = cuda.to_gpu(t_dis)
 
-        z = Variable(xp.random.uniform(-1,1,(batchsize,128), dtype = xp.float32))
+        z = Variable(xp.random.normal(size=(batchsize,128),dtype=xp.float32))
         label = cuda.to_gpu(get_fake_tag_batch(batchsize, dims, threshold))
         z = F.concat([z, Variable(label)])
         x_fake = generator(z)
@@ -112,17 +126,11 @@ for epoch in range(epochs):
         label = Variable(label)
         loss_gen_class = BCE(y_fake_cls, label)
 
-        loss_gen = lambda2 * loss_func_dcgan_dis_real(y_fake) + loss_gen_class
-        generator.cleargrads()
-        loss_gen.backward()
-        loss_gen.unchain_backward()
-        gen_opt.update()
-
         std_data = xp.std(x_dis, axis=0, keepdims = True)
         rnd_x = xp.random.uniform(0,1,x_dis.shape).astype(xp.float32)
         x_perturbed = Variable(cuda.to_gpu(x_dis + 0.5*rnd_x*std_data))
 
-        x_real = Variable(x_dis)
+        x_real = Variable(x_real)
         y_dis,  y_dis_cls= discriminator(x_real)
         y_perturbed, _  = discriminator(x_perturbed)
         grad, = chainer.grad([y_perturbed],[x_perturbed], enable_double_backprop=True)
@@ -134,20 +142,36 @@ for epoch in range(epochs):
         loss_dis_class = BCE(y_dis_cls, t_dis)
 
         if gan_type == "Normal":
-            loss_dis = lambda2 * (loss_func_dcgan_dis_real(y_dis) + loss_func_dcgan_dis_fake(y_fake))  + loss_dis_class + loss_grad
+            loss_dis = lambda2 * (loss_func_dcgan_dis_real(y_dis) + loss_func_dcgan_dis_fake(y_fake))  + loss_dis_class + loss_gen_class + loss_grad
 
-        if gan_type == "RaGAN":
-            fake_mean = F.broadcast_to(F.mean(y_fake), (batchsize,1))
-            real_mean = F.broadcast_to(F.mean(y_dis), (batchsize,1))
+        #if gan_type == "RaGAN":
+        #    fake_mean = F.broadcast_to(F.mean(y_fake), (batchsize,1))
+        #    real_mean = F.broadcast_to(F.mean(y_dis), (batchsize,1))
 
-            loss_dis = (loss_func_dcgan_dis_real(y_dis - fake_mean) + loss_func_dcgan_dis_fake(y_fake - real_mean))/2 + loss_grad
-            loss_dis += loss_dis_class
-            loss_gen = (loss_func_dcgan_dis_real(y_fake - real_mean) + loss_func_dcgan_dis_fake(y_dis - fake_mean))/2
+        #    loss_dis = (loss_func_dcgan_dis_real(y_dis - fake_mean) + loss_func_dcgan_dis_fake(y_fake - real_mean))/2 + loss_grad
+        #    loss_dis += loss_dis_class
+        #    loss_gen = (loss_func_dcgan_dis_real(y_fake - real_mean) + loss_func_dcgan_dis_fake(y_dis - fake_mean))/2
 
         discriminator.cleargrads()
         loss_dis.backward()
         loss_dis.unchain_backward()
         dis_opt.update()
+        
+        z = Variable(xp.random.normal(size=(batchsize,128),dtype=xp.float32))
+        label = cuda.to_gpu(get_fake_tag_batch(batchsize, dims, threshold))
+        z = F.concat([z, Variable(label)])
+
+        x_fake = generator(z)
+        y_fake, y_fake_cls = discriminator(x_fake)
+        label[label < 0] = 0.0
+        label = Variable(label)
+        loss_gen_class = BCE(y_fake_cls, label)
+
+        loss_gen = lambda2 * loss_func_dcgan_dis_real(y_fake) + loss_gen_class
+        generator.cleargrads()
+        loss_gen.backward()
+        loss_gen.unchain_backward()
+        gen_opt.update()
 
         sum_dis_loss += loss_dis.data.get()
         sum_gen_loss += loss_gen.data.get()
