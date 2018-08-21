@@ -53,3 +53,7 @@ Input size : 128✕128
 Paper -> [here](https://arxiv.org/pdf/1708.05509.pdf)  
 Input size : 128✕128
 ![SRResNet](./srresnet/visualize_77.png)
+
+### Residual Blocks
+Input size : 128✕128
+![resblock](./resblock/visualize_70.png)
