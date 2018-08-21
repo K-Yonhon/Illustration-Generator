@@ -48,3 +48,8 @@ Input size : 64✕64
 Paper -> [here](https://arxiv.org/pdf/1807.00734.pdf "here")  
 Input size : 128✕128  
 ![RaGAN](./RaGAN/result.png)
+
+### SRResNet + DRAGAN
+Paper -> [here](https://arxiv.org/pdf/1708.05509.pdf)  
+Input size : 128✕128
+![SRResNet](./srresnet/visualize_77.png)
