@@ -41,6 +41,41 @@ class CBR(Chain):
 
         return h
 
+class SE(Chain):
+    def __init__(self,in_ch,r):
+        super(SE,self).__init__()
+        w=initializers.Normal(0.02)
+        with self.init_scope():
+            self.l0=L.Linear(in_ch,int(in_ch/r),initialW=w)
+            self.l1=L.Linear(int(in_ch/r),in_ch,initialW=w)
+
+    def __call__(self,x):
+        b,c,h,w=x.shape
+        h=F.mean(F.average_pooling2d(x),axis=(2,3))
+        h=F.relu(self.l0(h))
+        h=F.sigmoid(self.l1(h))
+
+        return x*F.broadcast_to(h.reshape(b,c,1,1),(b,c,h,w))
+
+class Gen_SEResblock(Chain):
+    def __init__(self,in_ch,hid_ch):
+        super(Gen_SEResblock,self).__init__()
+        w=initializers.Normal(0.02)
+        with self.init_scope():
+            self.c0 = L.Convolution2D(in_ch,hid_ch,3,1,1,initialW=w)
+            self.c1 = L.Convolution2D(hid_ch, hid_ch, 3,1,1,initialW=w)
+
+            self.bn0 = L.BatchNormalization(hid_ch)
+            self.bn1 = L.BatchNormalization(hid_ch)
+            self.se0 = SE(hid_ch,r=16)
+
+    def __call__(self,x):
+        h = F.relu(self.bn0(self.c0(x)))
+        h = self.bn1(self.c1(h))
+        h = self.se0(h)
+
+        return h + x
+
 class Gen_ResBlock(Chain):
     def __init__(self, in_ch, hid_ch):
         super(Gen_ResBlock, self).__init__()
