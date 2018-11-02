@@ -42,7 +42,7 @@ class CBR(Chain):
         return h
 
 class SE(Chain):
-    def __init__(self,in_ch,r):
+    def __init__(self,in_ch,r=16):
         super(SE,self).__init__()
         w=initializers.Normal(0.02)
         with self.init_scope():
@@ -51,15 +51,15 @@ class SE(Chain):
 
     def __call__(self,x):
         b,c,h,w=x.shape
-        h=F.mean(F.average_pooling2d(x),axis=(2,3))
-        h=F.relu(self.l0(h))
-        h=F.sigmoid(self.l1(h))
+        y=F.reshape(F.average_pooling_2d(x,(h,w)),(b,c))
+        y=F.relu(self.l0(y))
+        y=F.sigmoid(self.l1(y))
 
-        return x*F.broadcast_to(h.reshape(b,c,1,1),(b,c,h,w))
+        return x*F.transpose(F.broadcast_to(y, (h, w, b, c)), (2, 3, 0, 1))
 
-class Gen_SEResblock(Chain):
+class Gen_SEResBlock(Chain):
     def __init__(self,in_ch,hid_ch):
-        super(Gen_SEResblock,self).__init__()
+        super(Gen_SEResBlock,self).__init__()
         w=initializers.Normal(0.02)
         with self.init_scope():
             self.c0 = L.Convolution2D(in_ch,hid_ch,3,1,1,initialW=w)
