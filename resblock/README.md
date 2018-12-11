@@ -17,7 +17,7 @@ $ python train.py
 
 ## Result
 私の環境で生成した画像を以下に示す。
-![Result](https://github.com/SerialLain3170/Illustration-Generator/blob/master/resblock/visualize_70.png)
+![Result](https://github.com/SerialLain3170/Illustration-Generator/blob/master/resblock/visualize_166.png)
 
 - 70 epoch目
 - バッチサイズは16
