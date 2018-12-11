@@ -54,4 +54,4 @@ Input size : 128✕128
 
 ### Residual Blocks
 Input size : 128✕128
-![resblock](./resblock/visualize_70.png)
+![resblock](./resblock/visualize_166.png)
