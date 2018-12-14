@@ -50,8 +50,8 @@ Input size : 128✕128
 ### SRResNet + DRAGAN
 Paper -> [here](https://arxiv.org/pdf/1708.05509.pdf)  
 Input size : 128✕128
-![SRResNet](./srresnet/visualize_77.png)
+![SRResNet](./srresnet/summary_a.png)
 
 ### Residual Blocks
 Input size : 128✕128
-![resblock](./resblock/visualize_166.png)
+![resblock](./resblock/summarize.png)
