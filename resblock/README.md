@@ -17,8 +17,8 @@ $ python train.py
 
 ## Result
 私の環境で生成した画像を以下に示す。
-![Result](https://github.com/SerialLain3170/Illustration-Generator/blob/master/resblock/visualize_166.png)
-
+![Result](https://github.com/SerialLain3170/Illustration-Generator/blob/master/resblock/summarize.png)
+![Result](https://github.com/SerialLain3170/Illustration-Generator/blob/master/resblock/conditional.png)
 - 70 epoch目
 - バッチサイズは16
 - 少ないバッチサイズのため、上図のように不安定な絵になっている。
