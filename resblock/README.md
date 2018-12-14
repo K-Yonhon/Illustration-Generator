@@ -19,7 +19,6 @@ $ python train.py
 私の環境で生成した画像を以下に示す。
 ![Result](https://github.com/SerialLain3170/Illustration-Generator/blob/master/resblock/summarize.png)
 ![Result](https://github.com/SerialLain3170/Illustration-Generator/blob/master/resblock/conditional.png)
-- 70 epoch目
-- バッチサイズは16
-- 少ないバッチサイズのため、上図のように不安定な絵になっている。
+- バッチサイズは100
+- ProjectionによりConditional的にも出来ている
 - Adamの各パラメータとしてはα=0.0002、β1=0.5、β2=0.99
