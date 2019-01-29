@@ -39,12 +39,12 @@ parser.add_argument("--i", default=2000, type=int, help="the number of iteration
 parser.add_argument("--lgp", default=10.0, type=float, help="the weight of gradient penalty")
 parser.add_argument("--stage", default=6, type=int, help="the number of stages")
 parser.add_argument("--si", default=300000, type=int, help="stage interval")
-parser.add_argument('--n', default=22000, type=int, help = "the number of train images")
+parser.add_argument('--n', default=20000, type=int, help = "the number of train images")
 
 outdir = Path('./outdir')
 outdir.mkdir(parents=False, exist_ok=True)
 
-image_path = './face_getchu/'
+image_path = './face_getchu_2/'
 image_list = os.listdir(image_path)
 
 args = parser.parse_args()
@@ -89,19 +89,21 @@ for epoch in range(epochs):
 
         x = chainer.as_variable(xp.array(image_box).astype(xp.float32))
         z = chainer.as_variable(xp.random.uniform(-1,1,size=(batchsize, 512)).astype(xp.float32))
-        stage = counter / stage_interval
+        stage = int(counter / stage_interval) + 1
+
+        x_down = F.average_pooling_2d(x, 2**(5-stage), 2**(5-stage), 0)
 
         m = mapping(z)
         noise = chainer.as_variable(xp.random.uniform(-1, 1, size=(batchsize, 512, 4, 4)).astype(xp.float32))
 
         y = generator(const, m, stage)
         y_dis = discriminator(y, stage)
-        x_dis = discriminator(x, stage)
+        x_dis = discriminator(x_down, stage)
 
         dis_loss = F.mean(F.softplus(-x_dis)) + F.mean(F.softplus(y_dis))
 
         eps = xp.random.uniform(0,1,size = batchsize).astype(xp.float32)[:,None,None,None]
-        x_mid = eps * y + (1.0 - eps) * x
+        x_mid = eps * y + (1.0 - eps) * x_down
 
         y_mid = F.sum(discriminator(x_mid, stage))
         grad,  = chainer.grad([y_mid], [x_mid], enable_double_backprop=True)
@@ -115,11 +117,11 @@ for epoch in range(epochs):
         dis_opt.update()
         dis_loss.unchain_backward()
 
-        z = chainer.as_variable(xp.uniform(-1,1,size=(batchsize, 512)).astype(xp.float32))
+        z = chainer.as_variable(xp.random.uniform(-1,1,size=(batchsize, 512)).astype(xp.float32))
         m = mapping(z)
         noise = xp.random.uniform(-1, 1, size=(batchsize, 512, 4, 4))
 
-        y = generator(z, m, noise, stage)
+        y = generator(const, m, stage)
         y_dis = discriminator(y, stage)
 
         gen_loss = F.mean(F.softplus(-y_dis))
@@ -134,9 +136,23 @@ for epoch in range(epochs):
         sum_dis_loss += dis_loss.data.get()
         sum_gen_loss += gen_loss.data.get()
 
+        counter += batchsize
+
         if batch == 0:
             serializers.save_npz('generator.model', generator)
             serializers.save_npz('mapping.model', mapping)
+            pylab.rcParams['figure.figsize'] = (16.0,16.0)
+            pylab.clf()
+            with chainer.using_config('train',False):
+                m = mapping(test_latent)
+                x = generator(const,m,stage)
+            x = x.data.get()
+            for i_ in range(batchsize):
+                tmp = (np.clip((x[i_,:,:,:]*127.5 + 127.5), 0.0, 255.0)).transpose(1,2,0).astype(np.uint8)
+                pylab.subplot(8,8,i_+1)
+                pylab.imshow(tmp)
+                pylab.axis('off')
+                pylab.savefig('%s/visualize_%d_stage%d.png'%(outdir, epoch,stage))
 
     print('epoch : {}'.format(epoch))
     print('discriminator loss : {}'.format(sum_dis_loss / iterations))

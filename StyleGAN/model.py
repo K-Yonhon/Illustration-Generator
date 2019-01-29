@@ -26,7 +26,7 @@ class MappingNetwork(Chain):
         return x
 
 class AffineTransform(Chain):
-    def __init__(self, ch_list = [512, 512, 512, 512, 256, 256, 128, 128, 64]):
+    def __init__(self, ch_list = [512, 512, 512, 256, 256, 256, 128, 128, 64]):
         cbrs = chainer.ChainList()
         super(AffineTransform, self).__init__()
         for i in range(1, len(ch_list)):
@@ -123,7 +123,7 @@ class Block(Chain):
         super(Block, self).__init__()
         with self.init_scope():
             self.cbr0 = CBR(in_channels, out_channels)
-            self.cbr1 = CBR(in_channels, out_channels)
+            self.cbr1 = CBR(out_channels, out_channels)
 
             self.b0 = ScaleFactors()
             self.b1 = ScaleFactors()
@@ -139,8 +139,7 @@ class Block(Chain):
         scale = h
         affine = self.a0(w, stage)
         h = adain(scale, affine)
-        h = self.cbr0(h)
-
+        h = self.cbr1(h)
         
         #scale = self.b1(noise) + h
         scale = h
@@ -157,7 +156,7 @@ class Generator(Chain):
         outs = chainer.ChainList()
         for i in range(1, len(ch_list)):
             blocks.add_link(Block(ch_list[i-1], ch_list[i]))
-            outs.add_link(L.Convolution2D(ch_list[i-1], 3,3,1,1,initialW=w))
+            outs.add_link(L.Convolution2D(ch_list[i], 3,3,1,1,initialW=w))
         with self.init_scope():
             self.b0 = InitialBlock(base*16, base*16)
             self.blocks = blocks
@@ -167,10 +166,10 @@ class Generator(Chain):
         h = self.b0(x, w)
         for i, block in enumerate(self.blocks.children()):
             h = block(h, stage, w)
-            if i == stage:
+            if i == stage-1:
                 break
 
-        h = self.outs.children()[stage](h)
+        h = self.outs[stage](h)
 
         return h
 
@@ -202,7 +201,7 @@ class Discriminator(Chain):
         ins = chainer.ChainList()
         for i in range(1, len(ch_list)):
             blocks.add_link(CBR_Dis(ch_list[i], ch_list[i-1]))
-            ins.add_link(CBR_Dis(ch_list[i], ch_list[i-1], down=False))
+            ins.add_link(CBR_Dis(3, ch_list[i], down=False))
 
         with self.init_scope():
             self.blocks = blocks
@@ -210,10 +209,12 @@ class Discriminator(Chain):
             self.c5 = L.Linear(None, 1)
 
     def __call__(self, x, stage):
-        h = self.ins.children()[stage](x)
+        h = self.ins[stage](x)
         for i, block in enumerate(self.blocks.children()):
             h = block(h)
-            if i ==  stage:
+            if i ==  stage - 1:
                 break
+
+        h = self.c5(h)
 
         return h
