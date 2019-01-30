@@ -46,7 +46,7 @@ parser.add_argument('--n', default=20000, type=int, help = "the number of train 
 outdir = Path('./outdir')
 outdir.mkdir(parents=False, exist_ok=True)
 
-image_path = '/usr/MachineLearning/Dataset/face_getchu_2/'
+image_path = './face_getchu_2/'
 image_list = os.listdir(image_path)
 
 args = parser.parse_args()
