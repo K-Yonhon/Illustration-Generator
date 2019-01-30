@@ -7,6 +7,15 @@ import numpy as np
 xp = cuda.cupy
 cuda.get_device(0).use()
 
+def minibatch_std(x):
+    m = F.mean(x, axis = 0, keepdims = True)
+    v = F.mean((x - F.broadcast_to(m, x.shape))*(x - F.broadcast_to(m, x.shape)), axis = 0, keepdims = True)
+    std = F.mean(F.sqrt(v + 1.0e-8), keepdims = True)
+    std = F.broadcast_to(std, (x.shape[0], 1, x.shape[2], x.shape[3]))
+    y = F.concat([x,std], axis = 1)
+    
+    return y
+
 class MappingNetwork(Chain):
     def __init__(self, base=512, layers=8):
         w = initializers.Normal(0.02)
@@ -53,12 +62,29 @@ class AffineTransform(Chain):
         return x
 
 class ScaleFactors(Chain):
-    def __init__(self):
+    def __init__(self, ch_list = [512, 512, 512, 256, 256, 128, 128, 64, 64, 64, 64, 32]):
+        cbrs = chainer.ChainList()
         super(ScaleFactors, self).__init__()
-        pass
+        for i in range(1, len(ch_list)):
+            cbrs.add_link(CBR(ch_list[i-1], ch_list[i], nobias=True, depthwise=True))
 
-    def __call__(self):
-        pass
+        with self.init_scope():
+            self.cbrs = cbrs
+
+    def __call__(self, x, stage):
+        for i, cbr in enumerate(self.cbrs.children()):
+            if i == 0:
+                x = cbr(x)
+            elif i % 2 == 1:
+                x = cbr(x)
+            elif i % 2 == 0 and i != 0:
+                x = F.unpooling_2d(x,2,2,0,cover_all=False)
+                x = cbr(x)
+
+            if i == stage:
+                break
+
+        return x
 
 def calc_mean_std(feature, eps=1e-5):
     batch, channels, _, _ = feature.shape
@@ -85,15 +111,23 @@ def adain(content_feature, style_feature):
     return normalized_feat * style_std + style_mean
 
 class CBR(Chain):
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, nobias=False, depthwise=False):
         w = initializers.Normal(0.02)
+        self.depthwise = depthwise
         super(CBR, self).__init__()
         with self.init_scope():
-            self.c = L.Convolution2D(in_channels, out_channels, 3,1,1,initialW=w)
+            self.c = L.Convolution2D(in_channels, out_channels, 3,1,1,initialW=w, nobias=False)
             self.bn = L.BatchNormalization(out_channels)
 
+            self.c_dw = L.Convolution2D(in_channels, out_channels, 1,1,0,initialW=w, nobias=True)
+            self.bn_dw = L.BatchNormalization(out_channels)
+
     def __call__(self, x):
-        h = F.leaky_relu(self.bn(self.c(x)))
+        if self.depthwise:
+            h = F.leaky_relu(self.bn_dw(self.c_dw(x)))
+        
+        else:
+            h = F.leaky_relu(self.bn(self.c(x)))
 
         return h
 
@@ -110,15 +144,15 @@ class InitialBlock(Chain):
             self.a0 = AffineTransform()
             self.a1 = AffineTransform()
 
-    def __call__(self, x, w, noise=None):
-        #scale = self.b0(noise) + x
-        scale = x
+    def __call__(self, x, w, noise):
+        scale = self.b0(noise, stage=0) + x
+        #scale = x
         affine = self.a0(w, stage=0)
         h = adain(scale, affine)
         h = self.cbr0(h)
 
-        #scale = self.b1(noise) + h
-        scale = h
+        scale = self.b1(noise, stage=1) + h
+        #scale = h
         affine = self.a1(w, stage=1)
         h = adain(scale, affine)
 
@@ -138,18 +172,18 @@ class Block(Chain):
             self.a0 = AffineTransform()
             self.a1 = AffineTransform()
 
-    def __call__(self, x, stage, w, noise=None):
+    def __call__(self, x, stage, w, noise):
         h = F.unpooling_2d(x, 2,2,0,cover_all=False)
         h = self.cbr0(h)
 
-        #scale = self.b0(noise) + h
-        scale = h
+        scale = self.b0(noise, 2*stage) + h
+        #scale = h
         affine = self.a0(w, 2*stage)
         h = adain(scale, affine)
         h = self.cbr1(h)
         
-        #scale = self.b1(noise) + h
-        scale = h
+        scale = self.b1(noise, 2*stage + 1) + h
+        #scale = h
         affine = self.a1(w, 2*stage+1)
         h = adain(scale, affine)
 
@@ -169,10 +203,10 @@ class Generator(Chain):
             self.blocks = blocks
             self.outs = outs
 
-    def __call__(self, x, w, stage, noise=None):
-        h = self.b0(x, w)
+    def __call__(self, x, w, stage, noise):
+        h = self.b0(x, w, noise)
         for i, block in enumerate(self.blocks.children()):
-            h = block(h, i + 1, w)
+            h = block(h, i + 1, w, noise)
             if i == stage - 1:
                 break
 
@@ -202,7 +236,7 @@ class CBR_Dis(Chain):
         return h
 
 class Discriminator(Chain):
-    def __init__(self, base=64, ch_list = [1024, 512, 256, 128, 64, 64]):
+    def __init__(self, base=64, ch_list = [512, 512, 256, 128, 64, 64]):
         super(Discriminator, self).__init__()
         blocks = chainer.ChainList()
         ins = chainer.ChainList()
@@ -213,6 +247,7 @@ class Discriminator(Chain):
         with self.init_scope():
             self.blocks = blocks
             self.ins = ins
+            self.outs = CBR_Dis(ch_list[0] + 1, ch_list[0])
             self.c5 = L.Linear(None, 1)
 
     def __call__(self, x, stage):
@@ -222,6 +257,8 @@ class Discriminator(Chain):
             if i ==  stage - 1:
                 break
 
+        h = minibatch_std(h)
+        h = self.outs(h)
         h = self.c5(h)
-
+        
         return h

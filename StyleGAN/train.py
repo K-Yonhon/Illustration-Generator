@@ -36,17 +36,17 @@ def prepare_dataset(filename, size = 128):
 
 parser = argparse.ArgumentParser(description="StyleGAN")
 parser.add_argument("--e", default=1000, type=int, help="the number of epochs")
-parser.add_argument("--b", default=64, type=int, help="batch size")
+parser.add_argument("--b", default=36, type=int, help="batch size")
 parser.add_argument("--i", default=2000, type=int, help="the number of iterations")
 parser.add_argument("--lgp", default=10.0, type=float, help="the weight of gradient penalty")
 parser.add_argument("--stage", default=6, type=int, help="the number of stages")
 parser.add_argument("--si", default=500000, type=int, help="stage interval")
-parser.add_argument('--n', default=17000, type=int, help = "the number of train images")
+parser.add_argument('--n', default=20000, type=int, help = "the number of train images")
 
 outdir = Path('./outdir')
 outdir.mkdir(parents=False, exist_ok=True)
 
-image_path = './face_getchu/'
+image_path = '/usr/MachineLearning/Dataset/face_getchu_2/'
 image_list = os.listdir(image_path)
 
 args = parser.parse_args()
@@ -98,7 +98,7 @@ for epoch in range(epochs):
         m = mapping(z)
         noise = chainer.as_variable(xp.random.uniform(-1, 1, size=(batchsize, 512, 4, 4)).astype(xp.float32))
 
-        y = generator(const, m, stage)
+        y = generator(const, m, stage, noise)
         y_dis = discriminator(y, stage)
         x_dis = discriminator(x_down, stage)
 
@@ -112,6 +112,8 @@ for epoch in range(epochs):
         grad = F.sqrt(F.sum(grad*grad, axis=(1,2,3)))
         loss_gp = lambda_gp * F.mean_squared_error(grad, xp.ones_like(grad.data))
 
+        y.unchain_backward()
+
         dis_loss += loss_gp
 
         discriminator.cleargrads()
@@ -121,9 +123,9 @@ for epoch in range(epochs):
 
         z = chainer.as_variable(xp.random.uniform(-1,1,size=(batchsize, 512)).astype(xp.float32))
         m = mapping(z)
-        noise = xp.random.uniform(-1, 1, size=(batchsize, 512, 4, 4))
+        noise = xp.random.uniform(-1, 1, size=(batchsize, 512, 4, 4)).astype(xp.float32)
 
-        y = generator(const, m, stage)
+        y = generator(const, m, stage, noise)
         y_dis = discriminator(y, stage)
 
         gen_loss = F.mean(F.softplus(-y_dis))
@@ -158,4 +160,4 @@ for epoch in range(epochs):
 
     print('epoch : {}'.format(epoch))
     print('discriminator loss : {}'.format(sum_dis_loss / iterations))
-    print('generator loss : {}'.format(sum_gen_loss / iterations))
+print('generator loss : {}'.format(sum_gen_loss / iterations))
