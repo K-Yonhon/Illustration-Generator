@@ -5,6 +5,8 @@ import numpy as np
 import os
 from pathlib import Path
 import argparse
+import matplotlib
+matplotlib.use('Agg')
 import pylab
 import numpy as np
 import cv2 as cv
@@ -25,7 +27,7 @@ def prepare_dataset(filename, size = 128):
         image_orig = cv.resize(image_orig,(size,size),interpolation=cv.INTER_CUBIC)
         hflip = np.random.choice([True,False])
         if hflip:
-            image_orig = image_orig[::-1,:,:]
+            image_orig = image_orig[:,::-1,:]
         image = image_orig[:,:,::-1]
         image = image.transpose(2,0,1)
         image = (image-127.5)/127.5
@@ -38,13 +40,13 @@ parser.add_argument("--b", default=64, type=int, help="batch size")
 parser.add_argument("--i", default=2000, type=int, help="the number of iterations")
 parser.add_argument("--lgp", default=10.0, type=float, help="the weight of gradient penalty")
 parser.add_argument("--stage", default=6, type=int, help="the number of stages")
-parser.add_argument("--si", default=300000, type=int, help="stage interval")
-parser.add_argument('--n', default=20000, type=int, help = "the number of train images")
+parser.add_argument("--si", default=500000, type=int, help="stage interval")
+parser.add_argument('--n', default=17000, type=int, help = "the number of train images")
 
 outdir = Path('./outdir')
 outdir.mkdir(parents=False, exist_ok=True)
 
-image_path = './face_getchu_2/'
+image_path = './face_getchu/'
 image_list = os.listdir(image_path)
 
 args = parser.parse_args()
