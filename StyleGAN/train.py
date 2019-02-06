@@ -77,6 +77,8 @@ np.save('./const.npy', const)
 const = chainer.as_variable(cuda.to_gpu(const))
 test_latent = chainer.as_variable(xp.random.uniform(-1, 1, size=(batchsize, 512)).astype(xp.float32))
 
+ch_list = [512, 512, 256, 256, 128, 128, 64, 64, 64, 64, 32, 32]
+
 counter = 0
 
 for epoch in range(epochs):
@@ -89,16 +91,25 @@ for epoch in range(epochs):
             image = prepare_dataset(image_path + image_list[rnd])
             image_box.append(image)
 
-        x = chainer.as_variable(xp.array(image_box).astype(xp.float32))
-        z = chainer.as_variable(xp.random.uniform(-1,1,size=(batchsize, 512)).astype(xp.float32))
         stage = int(counter / stage_interval) + 1
 
+        x = chainer.as_variable(xp.array(image_box).astype(xp.float32))
         x_down = F.average_pooling_2d(x, 2**(5-stage), 2**(5-stage), 0)
 
-        m = mapping(z)
-        noise = chainer.as_variable(xp.random.uniform(-1, 1, size=(batchsize, 512, 4, 4)).astype(xp.float32))
+        m_list = []
+        noise_list = []
+        for i in range(2*stage + 1 + 1):
+            z = chainer.as_variable(xp.random.uniform(-1,1,size=(batchsize, 512)).astype(xp.float32))
+            m = mapping(z)
+            if i //2 == 0:
+                noise = chainer.as_variable(xp.random.uniform(-1, 1, size=(batchsize, ch_list[i], 4, 4)).astype(xp.float32))
+            else:
+                noise = chainer.as_variable(xp.random.uniform(-1, 1, size=(batchsize, ch_list[i], 4*(i//2+1), 4*(i//2+1))).astype(xp.float32))
 
-        y = generator(const, m, stage, noise)
+            m_list.append(m)
+            noise_list.append(noise)
+
+        y = generator(const, m_list, stage, noise_list)
         y_dis = discriminator(y, stage)
         x_dis = discriminator(x_down, stage)
 
@@ -121,11 +132,20 @@ for epoch in range(epochs):
         dis_opt.update()
         dis_loss.unchain_backward()
 
-        z = chainer.as_variable(xp.random.uniform(-1,1,size=(batchsize, 512)).astype(xp.float32))
-        m = mapping(z)
-        noise = xp.random.uniform(-1, 1, size=(batchsize, 512, 4, 4)).astype(xp.float32)
+        m_list = []
+        noise_list = []
+        for i in range(2*stage + 1 + 1):
+            z = chainer.as_variable(xp.random.uniform(-1,1,size=(batchsize, 512)).astype(xp.float32))
+            m = mapping(z)
+            if i //2 == 0:
+                noise = chainer.as_variable(xp.random.uniform(-1, 1, size=(batchsize, ch_list[i], 4, 4)).astype(xp.float32))
+            else:
+                noise = chainer.as_variable(xp.random.uniform(-1, 1, size=(batchsize, ch_list[i], 4*(i//2+1), 4*(i//2+1))).astype(xp.float32))
 
-        y = generator(const, m, stage, noise)
+            m_list.append(m)
+            noise_list.append(noise)
+
+        y = generator(const, m_list, stage, noise_list)
         y_dis = discriminator(y, stage)
 
         gen_loss = F.mean(F.softplus(-y_dis))
@@ -148,8 +168,20 @@ for epoch in range(epochs):
             pylab.rcParams['figure.figsize'] = (16.0,16.0)
             pylab.clf()
             with chainer.using_config('train',False):
-                m = mapping(test_latent)
-                x = generator(const,m,stage)
+                m_list = []
+                noise_list = []
+                for i in range(2*stage + 1 + 1):
+                    z = chainer.as_variable(xp.random.uniform(-1,1,size=(batchsize, 512)).astype(xp.float32))
+                    m = mapping(z)
+                    if i //2 == 0:
+                        noise = chainer.as_variable(xp.random.uniform(-1, 1, size=(batchsize, ch_list[i], 4, 4)).astype(xp.float32))
+                    else:
+                        noise = chainer.as_variable(xp.random.uniform(-1, 1, size=(batchsize, ch_list[i], 4*(i//2+1), 4*(i//2+1))).astype(xp.float32))
+                        
+                    m_list.append(m)
+                    noise_list.append(noise)
+
+                x = generator(const,m_list,stage, noise_list)
             x = x.data.get()
             for i_ in range(batchsize):
                 tmp = (np.clip((x[i_,:,:,:]*127.5 + 127.5), 0.0, 255.0)).transpose(1,2,0).astype(np.uint8)
@@ -160,4 +192,4 @@ for epoch in range(epochs):
 
     print('epoch : {}'.format(epoch))
     print('discriminator loss : {}'.format(sum_dis_loss / iterations))
-print('generator loss : {}'.format(sum_gen_loss / iterations))
+    print('generator loss : {}'.format(sum_gen_loss / iterations))

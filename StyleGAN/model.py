@@ -62,27 +62,18 @@ class AffineTransform(Chain):
         return x
 
 class ScaleFactors(Chain):
-    def __init__(self, ch_list = [512, 512, 512, 256, 256, 128, 128, 64, 64, 64, 64, 32]):
-        cbrs = chainer.ChainList()
+    def __init__(self, ch):
+        #scales = chainer.ChainList()
         super(ScaleFactors, self).__init__()
-        for i in range(1, len(ch_list)):
-            cbrs.add_link(CBR(ch_list[i-1], ch_list[i], nobias=True, depthwise=True))
+            #scale = chainer.Parameter(initializer=np.zeros((1,1,1,1,), dtype='float32'))
+            #scales.add_link(scale)
 
         with self.init_scope():
-            self.cbrs = cbrs
+            self.scale = chainer.Parameter(initializer=np.zeros((1,ch,1,1), dtype='float32'))
+            #self.scale = scales
 
     def __call__(self, x, stage):
-        for i, cbr in enumerate(self.cbrs.children()):
-            if i == 0:
-                x = cbr(x)
-            elif i % 2 == 1:
-                x = cbr(x)
-            elif i % 2 == 0 and i != 0:
-                x = F.unpooling_2d(x,2,2,0,cover_all=False)
-                x = cbr(x)
-
-            if i == stage:
-                break
+        x = x * F.broadcast_to((self.scale), x.shape)
 
         return x
 
@@ -138,22 +129,22 @@ class InitialBlock(Chain):
         with self.init_scope():
             self.cbr0 = CBR(in_channels, out_channels)
 
-            self.b0 = ScaleFactors()
-            self.b1 = ScaleFactors()
+            self.b0 = ScaleFactors(in_channels)
+            self.b1 = ScaleFactors(out_channels)
 
             self.a0 = AffineTransform()
             self.a1 = AffineTransform()
 
     def __call__(self, x, w, noise):
-        scale = self.b0(noise, stage=0) + x
+        scale = self.b0(noise[0], stage=0) + x
         #scale = x
-        affine = self.a0(w, stage=0)
+        affine = self.a0(w[0], stage=0)
         h = adain(scale, affine)
         h = self.cbr0(h)
 
-        scale = self.b1(noise, stage=1) + h
+        scale = self.b1(noise[1], stage=1) + h
         #scale = h
-        affine = self.a1(w, stage=1)
+        affine = self.a1(w[1], stage=1)
         h = adain(scale, affine)
 
         return h
@@ -166,8 +157,8 @@ class Block(Chain):
             self.cbr0 = CBR(in_channels, out_channels)
             self.cbr1 = CBR(out_channels, out_channels)
 
-            self.b0 = ScaleFactors()
-            self.b1 = ScaleFactors()
+            self.b0 = ScaleFactors(out_channels)
+            self.b1 = ScaleFactors(out_channels)
 
             self.a0 = AffineTransform()
             self.a1 = AffineTransform()
@@ -176,15 +167,15 @@ class Block(Chain):
         h = F.unpooling_2d(x, 2,2,0,cover_all=False)
         h = self.cbr0(h)
 
-        scale = self.b0(noise, 2*stage) + h
+        scale = self.b0(noise[2*stage], 2*stage) + h
         #scale = h
-        affine = self.a0(w, 2*stage)
+        affine = self.a0(w[2*stage], 2*stage)
         h = adain(scale, affine)
         h = self.cbr1(h)
         
-        scale = self.b1(noise, 2*stage + 1) + h
+        scale = self.b1(noise[2*stage+1], 2*stage + 1) + h
         #scale = h
-        affine = self.a1(w, 2*stage+1)
+        affine = self.a1(w[2*stage+1], 2*stage+1)
         h = adain(scale, affine)
 
         return h
@@ -204,7 +195,7 @@ class Generator(Chain):
             self.outs = outs
 
     def __call__(self, x, w, stage, noise):
-        h = self.b0(x, w, noise)
+        h = self.b0(x, w[:2], noise)
         for i, block in enumerate(self.blocks.children()):
             h = block(h, i + 1, w, noise)
             if i == stage - 1:
