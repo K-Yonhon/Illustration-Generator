@@ -15,7 +15,7 @@ from model import MappingNetwork, Generator, Discriminator
 xp = cuda.cupy
 cuda.get_device(0).use()
 
-def set_optimzier(model, alpha=0.0002, beta=0.5):
+def set_optimzier(model, alpha=0.0001, beta=0.5):
     optimizer = optimizers.Adam(alpha=alpha, beta1=beta)
     optimizer.setup(model)
 
@@ -36,17 +36,17 @@ def prepare_dataset(filename, size = 128):
 
 parser = argparse.ArgumentParser(description="StyleGAN")
 parser.add_argument("--e", default=1000, type=int, help="the number of epochs")
-parser.add_argument("--b", default=36, type=int, help="batch size")
+parser.add_argument("--b", default=64, type=int, help="batch size")
 parser.add_argument("--i", default=2000, type=int, help="the number of iterations")
 parser.add_argument("--lgp", default=10.0, type=float, help="the weight of gradient penalty")
 parser.add_argument("--stage", default=6, type=int, help="the number of stages")
-parser.add_argument("--si", default=500000, type=int, help="stage interval")
-parser.add_argument('--n', default=20000, type=int, help = "the number of train images")
+parser.add_argument("--si", default=1000000, type=int, help="stage interval")
+parser.add_argument('--n', default=17000, type=int, help = "the number of train images")
 
 outdir = Path('./outdir')
 outdir.mkdir(parents=False, exist_ok=True)
 
-image_path = './face_getchu_2/'
+image_path = './getchu'
 image_list = os.listdir(image_path)
 
 args = parser.parse_args()
@@ -60,7 +60,7 @@ Ntrain = args.n
 
 mapping = MappingNetwork()
 mapping.to_gpu()
-map_opt = set_optimzier(mapping)
+map_opt = set_optimzier(mapping, alpha=0.000001)
 
 generator = Generator()
 generator.to_gpu()
@@ -70,14 +70,14 @@ discriminator = Discriminator()
 discriminator.to_gpu()
 dis_opt = set_optimzier(discriminator)
 
-const = np.random.uniform(-1, 1, size=(1, 512,4,4)).astype(np.float32)
+const = np.random.normal(size=(1, 512,4,4)).astype(np.float32)
 const = np.tile(const, (batchsize,1,1,1))
 np.save('./const.npy', const)
 
 const = chainer.as_variable(cuda.to_gpu(const))
-test_latent = chainer.as_variable(xp.random.uniform(-1, 1, size=(batchsize, 512)).astype(xp.float32))
+test_latent = chainer.as_variable(xp.random.normal(size=(batchsize, 512)).astype(xp.float32))
 
-ch_list = [512, 512, 256, 256, 128, 128, 64, 64, 64, 64, 32, 32]
+ch_list = [512, 512, 256, 256, 256, 256, 128, 128, 128, 128, 64, 64]
 
 counter = 0
 
@@ -92,19 +92,27 @@ for epoch in range(epochs):
             image_box.append(image)
 
         stage = int(counter / stage_interval) + 1
+        if stage > 5:
+            stage = 5
 
         x = chainer.as_variable(xp.array(image_box).astype(xp.float32))
         x_down = F.average_pooling_2d(x, 2**(5-stage), 2**(5-stage), 0)
 
         m_list = []
         noise_list = []
+        z1 = chainer.as_variable(xp.random.normal(size=(batchsize, 512)).astype(xp.float32))
+        z2 = chainer.as_variable(xp.random.normal(size=(batchsize, 512)).astype(xp.float32))
+        switch_point = np.random.randint(1, 2*stage)
         for i in range(2*stage + 1 + 1):
-            z = chainer.as_variable(xp.random.uniform(-1,1,size=(batchsize, 512)).astype(xp.float32))
+            if i >= switch_point:
+                z = z2
+            else:
+                z = z1
             m = mapping(z)
             if i //2 == 0:
-                noise = chainer.as_variable(xp.random.uniform(-1, 1, size=(batchsize, ch_list[i], 4, 4)).astype(xp.float32))
+                noise = chainer.as_variable(xp.random.normal(size=(batchsize, ch_list[i], 4, 4)).astype(xp.float32))
             else:
-                noise = chainer.as_variable(xp.random.uniform(-1, 1, size=(batchsize, ch_list[i], 4*(i//2+1), 4*(i//2+1))).astype(xp.float32))
+                noise = chainer.as_variable(xp.random.normal(size=(batchsize, ch_list[i], 2**(i//2+2), 2**(i//2+2))).astype(xp.float32))
 
             m_list.append(m)
             noise_list.append(noise)
@@ -134,13 +142,19 @@ for epoch in range(epochs):
 
         m_list = []
         noise_list = []
+        z1 = chainer.as_variable(xp.random.normal(size=(batchsize, 512)).astype(xp.float32))
+        z2 = chainer.as_variable(xp.random.normal(size=(batchsize, 512)).astype(xp.float32))
+        switch_point = np.random.randint(1, 2*stage)
         for i in range(2*stage + 1 + 1):
-            z = chainer.as_variable(xp.random.uniform(-1,1,size=(batchsize, 512)).astype(xp.float32))
+            if i >= switch_point:
+                z = z2
+            else:
+                z = z1
             m = mapping(z)
             if i //2 == 0:
-                noise = chainer.as_variable(xp.random.uniform(-1, 1, size=(batchsize, ch_list[i], 4, 4)).astype(xp.float32))
+                noise = chainer.as_variable(xp.random.normal(size=(batchsize, ch_list[i], 4, 4)).astype(xp.float32))
             else:
-                noise = chainer.as_variable(xp.random.uniform(-1, 1, size=(batchsize, ch_list[i], 4*(i//2+1), 4*(i//2+1))).astype(xp.float32))
+                noise = chainer.as_variable(xp.random.normal(size=(batchsize, ch_list[i], 2**(i//2+2), 2**(i//2+2))).astype(xp.float32))
 
             m_list.append(m)
             noise_list.append(noise)
@@ -163,25 +177,32 @@ for epoch in range(epochs):
         counter += batchsize
 
         if batch == 0:
-            serializers.save_npz('generator.model', generator)
-            serializers.save_npz('mapping.model', mapping)
+            if epoch % 10 == 0:
+                serializers.save_npz('generator_{}.model'.format(epoch), generator)
+                serializers.save_npz('mapping_{}.model'.format(epoch), mapping)
+                serializers.save_npz('discriminator_{}.model'.format(epoch),discriminator)
             pylab.rcParams['figure.figsize'] = (16.0,16.0)
             pylab.clf()
             with chainer.using_config('train',False):
                 m_list = []
                 noise_list = []
+                z1 = chainer.as_variable(xp.random.normal(size=(batchsize, 512)).astype(xp.float32))
+                z2 = chainer.as_variable(xp.random.normal(size=(batchsize, 512)).astype(xp.float32))
+                switch_point = np.random.randint(1, 2*stage)
                 for i in range(2*stage + 1 + 1):
-                    z = chainer.as_variable(xp.random.uniform(-1,1,size=(batchsize, 512)).astype(xp.float32))
+                    if i >= switch_point:
+                        z = z2
+                    else:
+                        z = z1
                     m = mapping(z)
                     if i //2 == 0:
-                        noise = chainer.as_variable(xp.random.uniform(-1, 1, size=(batchsize, ch_list[i], 4, 4)).astype(xp.float32))
+                        noise = chainer.as_variable(xp.random.normal(size=(batchsize, ch_list[i], 4, 4)).astype(xp.float32))
                     else:
-                        noise = chainer.as_variable(xp.random.uniform(-1, 1, size=(batchsize, ch_list[i], 4*(i//2+1), 4*(i//2+1))).astype(xp.float32))
-                        
+                        noise = chainer.as_variable(xp.random.normal(size=(batchsize, ch_list[i], 2**(i//2+2), 2**(i//2+2))).astype(xp.float32))                        
                     m_list.append(m)
                     noise_list.append(noise)
 
-                x = generator(const,m_list,stage, noise_list)
+                x = generator(const,m_list,stage,noise_list)
             x = x.data.get()
             for i_ in range(batchsize):
                 tmp = (np.clip((x[i_,:,:,:]*127.5 + 127.5), 0.0, 255.0)).transpose(1,2,0).astype(np.uint8)
