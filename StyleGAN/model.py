@@ -16,13 +16,48 @@ def minibatch_std(x):
     
     return y
 
+class EqualizedConv2d(Chain):
+    def  __init__(self, in_ch, out_ch, ksize, stride, pad):
+        w = chainer.initializers.Normal(1.0)
+        self.inv_c = np.sqrt(2.0 / (in_ch * ksize **2))
+        super(EqualizedConv2d, self).__init__(
+            conv = L.Convolution2D(in_ch, out_ch, ksize, stride, pad, initialW = w),
+        )
+    
+    def __call__(self,x):
+        return self.conv(self.inv_c * x)
+
+class EqualizedLinear(Chain):
+    def  __init__(self, in_ch, out_ch):
+        w = chainer.initializers.Normal(1.0)
+        self.inv_c = np.sqrt(2.0 / in_ch)
+        super(EqualizedLinear, self).__init__(
+            l = L.Linear(in_ch, out_ch, initialW = w),
+        )
+    
+    def __call__(self,x):
+         return self.l(self.inv_c * x)
+
+
+class Constant(Chain):
+    def __init__(self):
+        super(Constant,self).__init__()
+
+        with self.init_scope():
+            self.input = chainer.Parameter(initializer=np.random.normal(size=(1,512,4,4)).astype(np.float32))
+
+    def __call__(self):
+        h = F.tile(self.input, (64,1,1,1))
+
+        return h
+
 class MappingNetwork(Chain):
     def __init__(self, base=512, layers=8):
         w = initializers.GlorotUniform()
         super(MappingNetwork, self).__init__()
         mapping_net = chainer.ChainList()
         for _ in range(layers):
-            mapping = L.Linear(base, base, initialW=w)
+            mapping = EqualizedLinear(base, base)
             mapping_net.add_link(mapping)
 
         with self.init_scope():
@@ -31,12 +66,12 @@ class MappingNetwork(Chain):
     def __call__(self, x):
         for m in self.mapping_net.children():
             x = m(x)
-            x = F.relu(x)
+            x = F.leaky_relu(x)
 
         return x
 
 class AffineTransform(Chain):
-    def __init__(self, ch_list = [512, 512, 512, 256, 256, 256, 256, 128, 128, 128, 128, 64, 64]):
+    def __init__(self, ch_list = [512, 512, 512, 512, 512, 256, 256, 256, 256, 128, 128, 128, 128]):
         cbrs = chainer.ChainList()
         super(AffineTransform, self).__init__()
         for i in range(1, len(ch_list)):
@@ -112,10 +147,10 @@ class CBR(Chain):
         self.depthwise = depthwise
         super(CBR, self).__init__()
         with self.init_scope():
-            self.c = L.Convolution2D(in_channels, out_channels, 3,1,1,initialW=w, nobias=False)
+            self.c = EqualizedConv2d(in_channels, out_channels, 3,1,1)
             self.bn = L.BatchNormalization(out_channels)
 
-            self.c_dw = L.Convolution2D(in_channels, out_channels, 1,1,0,initialW=w)
+            self.c_dw = EqualizedConv2d(in_channels, out_channels, 1,1,0)
             self.bn_dw = L.BatchNormalization(out_channels)
 
     def __call__(self, x):
@@ -159,7 +194,7 @@ class Block(Chain):
         w = initializers.GlorotUniform()
         super(Block, self).__init__()
         with self.init_scope():
-            self.c_sc = L.Convolution2D(in_channels, out_channels,1,1,0,initialW=w)
+            self.c_sc = EqualizedConv2d(in_channels, out_channels,1,1,0)
 
             self.cbr0 = CBR(in_channels, out_channels)
             self.cbr1 = CBR(out_channels, out_channels)
@@ -191,30 +226,35 @@ class Block(Chain):
         affine = self.a1(w[2*stage+1], x, 2*stage+1)
         h = adain(scale, affine)
 
-        return h + self.shortcut(x)
+        h_sc = self.shortcut(x)
+
+        return h, h_sc
 
 class Generator(Chain):
-    def __init__(self, base=32, ch_list = [512, 256, 256, 128, 128, 64]):
+    def __init__(self, base=32, ch_list = [512, 512, 256, 256, 128, 128]):
         w = initializers.GlorotUniform()
         super(Generator, self).__init__()
         blocks = chainer.ChainList()
         outs = chainer.ChainList()
         for i in range(1, len(ch_list)):
             blocks.add_link(Block(ch_list[i-1], ch_list[i]))
-            outs.add_link(L.Convolution2D(ch_list[i], 3,3,1,1,initialW=w))
+            outs.add_link(EqualizedConv2d(ch_list[i], 3,3,1,1))
         with self.init_scope():
             self.b0 = InitialBlock(base*16, base*16)
             self.blocks = blocks
             self.outs = outs
 
-    def __call__(self, x, w, stage, noise):
+    def __call__(self, x, w, stage, noise, alpha):
         h = self.b0(x, w, noise)
         for i, block in enumerate(self.blocks.children()):
-            h = block(h, i + 1, w, noise)
+            h, h_sc = block(h, i + 1, w, noise)
             if i == stage - 1:
                 break
 
         h = self.outs[stage - 1](h)
+        h_sc = self.outs[stage - 1](h_sc)
+
+        h = (1 - alpha) * h_sc + alpha * h
         h = F.tanh(h)
 
         return h
@@ -225,10 +265,10 @@ class CBR_Dis(Chain):
         self.down = down
         super(CBR_Dis, self).__init__()
         with self.init_scope():
-            self.cdown = L.Convolution2D(in_channels, out_channels, 4,2,1,initialW=w)
-            self.cpara = L.Convolution2D(in_channels, out_channels,3,1,1,initialW=w)
-            self.csec = L.Convolution2D(out_channels, out_channels,3,1,1,initialW=w)
-            self.c_sc = L.Convolution2D(in_channels, out_channels, 1,1,0,nobias=True,initialW=w)
+            self.cdown = EqualizedConv2d(in_channels, out_channels, 4,2,1)
+            self.cpara = EqualizedConv2d(in_channels, out_channels,3,1,1)
+            self.csec = EqualizedConv2d(out_channels, out_channels,3,1,1)
+            self.c_sc = EqualizedConv2d(in_channels, out_channels, 1,1,0)
 
             #self.bnpara = L.BatchNormalization(out_channels)
             #self.bndown = L.BatchNormalization(out_channels)
@@ -236,9 +276,12 @@ class CBR_Dis(Chain):
 
     def shortcut(self, x, down):
         #h = F.relu(self.b_sc(self.c_sc(x)))
-        h = F.relu(self.c_sc(x))
         if down:
-            h = F.average_pooling_2d(h,2,2,0)
+            h = F.average_pooling_2d(x,2,2,0)
+            h = F.relu(self.c_sc(h))
+
+        else:
+            h = F.relu(self.c_sc(x))
 
         return h
 
@@ -247,18 +290,18 @@ class CBR_Dis(Chain):
             #h = F.relu(self.bndown(self.cdown(x)))
             h = F.relu(self.cdown(x))
             h = F.relu(self.csec(h))
-            h = h + self.shortcut(x, down=True)
+            h_sc = self.shortcut(x, down=True)
 
         else:
             #h = F.relu(self.bnpara(self.cpara(x)))
             h = F.relu(self.cpara(x))
             h = F.relu(self.csec(h))
-            h = h + self.shortcut(x, down=False)
+            h_sc = self.shortcut(x, down=False)
 
-        return h
+        return h, h_sc
 
 class Discriminator(Chain):
-    def __init__(self, base=64, ch_list = [512, 512, 256, 256, 128, 64]):
+    def __init__(self, base=64, ch_list = [512, 512, 256, 256, 128,128]):
         super(Discriminator, self).__init__()
         blocks = chainer.ChainList()
         ins = chainer.ChainList()
@@ -270,18 +313,19 @@ class Discriminator(Chain):
         with self.init_scope():
             self.blocks = blocks
             self.ins = ins
-            self.outs = CBR_Dis(ch_list[0] + 1, ch_list[0])
-            self.c5 = L.Linear(None, 1, initialW=w)
+            self.outs = CBR_Dis(ch_list[0], ch_list[0])
+            self.c5 = EqualizedLinear(512*2*2, 1)
 
-    def __call__(self, x, stage):
-        h = self.ins[stage - 1](x)
+    def __call__(self, x, stage, alpha):
+        h, _ = self.ins[stage - 1](x)
         for i, block in enumerate(self.blocks.children()):
-            h = self.blocks[stage - i - 1](h)
+            h, h_sc = self.blocks[stage - i - 1](h)
             if i ==  stage - 1:
                 break
 
-        h = minibatch_std(h)
-        h = self.outs(h)
+        h, _ = self.outs(h)
+        _, h_sc = self.outs(h_sc)
+        h = (1 - alpha) * h_sc + alpha * h
         h = self.c5(h)
         
         return h

@@ -10,7 +10,7 @@ matplotlib.use('Agg')
 import pylab
 import numpy as np
 import cv2 as cv
-from model import MappingNetwork, Generator, Discriminator
+from model import MappingNetwork, Generator, Discriminator, Constant
 
 xp = cuda.cupy
 cuda.get_device(0).use()
@@ -46,7 +46,7 @@ parser.add_argument('--n', default=17000, type=int, help = "the number of train 
 outdir = Path('./outdir')
 outdir.mkdir(parents=False, exist_ok=True)
 
-image_path = './getchu'
+image_path = './face_getchu/'
 image_list = os.listdir(image_path)
 
 args = parser.parse_args()
@@ -70,30 +70,32 @@ discriminator = Discriminator()
 discriminator.to_gpu()
 dis_opt = set_optimzier(discriminator)
 
-const = np.random.normal(size=(1, 512,4,4)).astype(np.float32)
-const = np.tile(const, (batchsize,1,1,1))
-np.save('./const.npy', const)
-
-const = chainer.as_variable(cuda.to_gpu(const))
+const_class = Constant()
+const_class.to_gpu()
+const = const_class()
 test_latent = chainer.as_variable(xp.random.normal(size=(batchsize, 512)).astype(xp.float32))
 
-ch_list = [512, 512, 256, 256, 256, 256, 128, 128, 128, 128, 64, 64]
+ch_list = [512, 512, 512, 512, 256, 256, 256, 256, 128, 128, 128, 128]
 
 counter = 0
+iteration = 0
 
 for epoch in range(epochs):
     sum_dis_loss = 0
     sum_gen_loss = 0
+    stage = int(counter / stage_interval) + 1
+    if stage > 5:
+        stage = 5
+    if stage == 5:
+        batchsize = 32
+        const = const[:batchsize]
     for batch in range(0, Ntrain, batchsize):
         image_box = []
+        alpha = min(1, 0.00002*iteration)
         for _ in range(batchsize):
             rnd = np.random.randint(Ntrain)
             image = prepare_dataset(image_path + image_list[rnd])
             image_box.append(image)
-
-        stage = int(counter / stage_interval) + 1
-        if stage > 5:
-            stage = 5
 
         x = chainer.as_variable(xp.array(image_box).astype(xp.float32))
         x_down = F.average_pooling_2d(x, 2**(5-stage), 2**(5-stage), 0)
@@ -117,16 +119,16 @@ for epoch in range(epochs):
             m_list.append(m)
             noise_list.append(noise)
 
-        y = generator(const, m_list, stage, noise_list)
-        y_dis = discriminator(y, stage)
-        x_dis = discriminator(x_down, stage)
+        y = generator(const, m_list, stage, noise_list, alpha)
+        y_dis = discriminator(y, stage, alpha)
+        x_dis = discriminator(x_down, stage, alpha)
 
         dis_loss = F.mean(F.softplus(-x_dis)) + F.mean(F.softplus(y_dis))
 
         eps = xp.random.uniform(0,1,size = batchsize).astype(xp.float32)[:,None,None,None]
         x_mid = eps * y + (1.0 - eps) * x_down
 
-        y_mid = F.sum(discriminator(x_mid, stage))
+        y_mid = F.sum(discriminator(x_mid, stage, alpha))
         grad,  = chainer.grad([y_mid], [x_mid], enable_double_backprop=True)
         grad = F.sqrt(F.sum(grad*grad, axis=(1,2,3)))
         loss_gp = lambda_gp * F.mean_squared_error(grad, xp.ones_like(grad.data))
@@ -159,8 +161,8 @@ for epoch in range(epochs):
             m_list.append(m)
             noise_list.append(noise)
 
-        y = generator(const, m_list, stage, noise_list)
-        y_dis = discriminator(y, stage)
+        y = generator(const, m_list, stage, noise_list, alpha)
+        y_dis = discriminator(y, stage, alpha)
 
         gen_loss = F.mean(F.softplus(-y_dis))
 
@@ -175,9 +177,11 @@ for epoch in range(epochs):
         sum_gen_loss += gen_loss.data.get()
 
         counter += batchsize
+        iteration += 1
 
         if batch == 0:
             if epoch % 10 == 0:
+                serializers.save_npz('const.model', const_class)
                 serializers.save_npz('generator_{}.model'.format(epoch), generator)
                 serializers.save_npz('mapping_{}.model'.format(epoch), mapping)
                 serializers.save_npz('discriminator_{}.model'.format(epoch),discriminator)
@@ -202,7 +206,7 @@ for epoch in range(epochs):
                     m_list.append(m)
                     noise_list.append(noise)
 
-                x = generator(const,m_list,stage,noise_list)
+                x = generator(const,m_list,stage,noise_list, alpha)
             x = x.data.get()
             for i_ in range(batchsize):
                 tmp = (np.clip((x[i_,:,:,:]*127.5 + 127.5), 0.0, 255.0)).transpose(1,2,0).astype(np.uint8)
