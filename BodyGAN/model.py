@@ -62,29 +62,49 @@ class Generator(Chain):
         w = initializers.GlorotUniform()
 
         with self.init_scope():
-            self.l0 = L.Linear(128+9, 4*4*base*8, initialW=w)
-            #self.res0 = Gen_ResBlock(base*16, base*16, activation=activation, up=True)
-            self.res1 = Gen_ResBlock(base*8, base*4, activation=activation, up=True)
-            self.res2 = Gen_ResBlock(base*4, base*4, activation=activation, up=True)
-            self.res3 = Gen_ResBlock(base*4, base*4, activation=activation, up=True)
-            self.res4 = Gen_ResBlock(base*4, base*2, activation=activation, up=True)
-            self.res5= Gen_ResBlock(base*2, base, activation=activation, up=True)
-            self.bn0 = L.BatchNormalization(base)
-            self.c0 = L.Convolution2D(base, 3, 3,1,1,initialW=w)
-        
-    def __call__(self, x):
-        b, _, = x.shape
-        h = F.reshape(self.l0(x), (b, 64*8, 8, 6))
-        #h = self.res0(h)
-        h = self.res1(h)
-        h = self.res2(h)
-        h = self.res3(h)
-        h = self.res4(h)
-        h = self.res5(h)
-        h = self.activation(self.bn0(h))
-        h = F.tanh(self.c0(h))
+            self.l0_body = L.Linear(128, 4*3*base*8, initialW=w)
+            self.res1_body = Gen_ResBlock(base*16, base*4, activation=activation, up=True)
+            self.res2_body = Gen_ResBlock(base*8, base*4, activation=activation, up=True)
+            self.res3_body = Gen_ResBlock(base*8, base*4, activation=activation, up=True)
+            self.res4_body = Gen_ResBlock(base*8, base*2, activation=activation, up=True)
+            self.res5_body = Gen_ResBlock(base*4, base, activation=activation, up=True)
+            self.bn0_body  = L.BatchNormalization(base*2)
 
-        return h
+            self.l0_seg = L.Linear(128, 4*3*base*8, initialW=w)
+            self.res1_seg = Gen_ResBlock(base*8, base*4, activation=activation, up=True)
+            self.res2_seg = Gen_ResBlock(base*4, base*4, activation=activation, up=True)
+            self.res3_seg = Gen_ResBlock(base*4, base*4, activation=activation, up=True)
+            self.res4_seg = Gen_ResBlock(base*4, base*2, activation=activation, up=True)
+            self.res5_seg = Gen_ResBlock(base*2, base, activation=activation, up=True)
+            self.bn0_seg  = L.BatchNormalization(base)
+
+            self.c0_body = L.Convolution2D(base * 2, 3, 3,1,1,initialW=w)
+            self.c0_seg = L.Convolution2D(base, 3,3,1,1,initialW=w)
+        
+    def __call__(self, z):
+        b, _, = z.shape
+
+        # Segmentation mask generation
+        h_1 = F.reshape(self.l0_seg(z), (b, 64*8, 4, 3))
+        h_2 = self.res1_seg(h_1)
+        h_3 = self.res2_seg(h_2)
+        h_4 = self.res3_seg(h_3)
+        h_5 = self.res4_seg(h_4)
+        h_6 = self.res5_seg(h_5)
+        h_seg = self.activation(self.bn0_seg(h_6))
+        h_seg = F.tanh(self.c0_seg(h_seg))
+
+        # Illustration generation
+        h = F.reshape(self.l0_body(z), (b, 64*8 , 4, 3))
+        h = self.res1_body(F.concat([h, h_1]))
+        h = self.res2_body(F.concat([h, h_2]))
+        h = self.res3_body(F.concat([h, h_3]))
+        h = self.res4_body(F.concat([h, h_4]))
+        h = self.res5_body(F.concat([h, h_5]))
+        h = self.activation(self.bn0_body(F.concat([h, h_6])))
+        h = F.tanh(self.c0_body(h))
+
+        return h, h_seg
 
 def downsample(x):
     return F.average_pooling_2d(x, 3,2,1)
@@ -170,7 +190,7 @@ class Discriminator(Chain):
         w = initializers.GlorotUniform()
         self.activation = activation
         with self.init_scope():
-            self.c0 = Dis_ResBlock(3, base, activation=activation, down=True)
+            self.c0 = Dis_ResBlock(6, base, activation=activation, down=True)
             self.res0 = Dis_ResBlock(base, base*2, activation=activation, down=True)
             self.res1 = Dis_ResBlock(base*2, base*4, activation=activation, down=True)
             self.res2 = Dis_ResBlock(base*4, base*4, activation=activation, down=True)
@@ -183,7 +203,7 @@ class Discriminator(Chain):
 
             self.bn0 = L.BatchNormalization(base)
 
-    def __call__(self, x,category):
+    def __call__(self, x):
         h = self.c0(x)
         h = self.res0(h)
         h = self.res1(h)
@@ -192,10 +212,7 @@ class Discriminator(Chain):
         h = self.res4(h)
         #h = self.res5(h)
         h = self.activation(h)
-        h = F.sum(h,axis=(2,3))
         output = self.l1(h)
-        cat = self.lembed(category)
-        output += F.sum(cat*h,axis=1,keepdims=True)
         #h = self.activation(self.l0(h))
 
         return output
@@ -273,5 +290,5 @@ class SimpleDiscriminator(Chain):
         h = self.c3(h)
         h = self.c4(h)
         h = self.l0(h)
-
+        
         return h
