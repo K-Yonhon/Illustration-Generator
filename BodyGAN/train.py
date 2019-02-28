@@ -116,19 +116,20 @@ for epoch in range(epochs):
             fake = discriminator(x, seg)
             real = discriminator(t,s)
             dis_loss = F.mean(F.softplus(-real)) + F.mean(F.softplus(fake))
-
+            
             x.unchain_backward()
             seg.unchain_backward()
 
-            #std_data = chainer.as_variable(xp.std(t.data, axis=0, keepdims = True))
-            #rnd_x = chainer.as_variable(xp.random.uniform(0,1,t.shape).astype(xp.float32))
-            #x_perturbed = t + 0.5 * rnd_x * std_data
+            std_data = xp.std(t.data, axis=0, keepdims = True)
+            rnd_x = xp.random.uniform(0,1,t.shape).astype(xp.float32)
+            x_perturbed = rnd_x * t +  (1 - rnd_x) * x
+            s_perturbed = rnd_x * s +  (1 - rnd_x) * seg
 
-            #y_perturbed = discriminator(x_perturbed, seg)
-            #grad, = chainer.grad([y_perturbed],[x_perturbed], enable_double_backprop=True)
-            #grad = F.sqrt(F.batch_l2_norm_squared(grad))
-            #loss_grad = lambda1 * F.mean_squared_error(grad, xp.ones_like(grad.data))
-            #dis_loss += loss_grad
+            y_perturbed = discriminator(x_perturbed, s_perturbed)
+            grad, = chainer.grad([y_perturbed],[x_perturbed], enable_double_backprop=True)
+            grad = F.sqrt(F.batch_l2_norm_squared(grad))
+            loss_grad = lambda1 * F.mean_squared_error(grad, xp.ones_like(grad.data))
+            dis_loss += loss_grad
 
             discriminator.cleargrads()
             dis_loss.backward()

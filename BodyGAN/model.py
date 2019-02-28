@@ -200,20 +200,22 @@ class Discriminator(Chain):
             self.l1_seg = L.Linear(None, 1, initialW=w)
 
     def __call__(self, x, seg):
+        # Setmentation discriminator
         h_1 = self.c0_seg(seg)
         h_2 = self.res0_seg(h_1)
         h_3 = self.res1_seg(h_2)
         h_4 = self.res2_seg(h_3)
         h_5 = self.res3_seg(h_4)
-        #h_seg = self.l1_seg(self.activation(h_5))
+        h_6 = self.res4_seg(h_5)
 
+        # Illustration discriminator
         h = self.c0_body(x)
         h = self.res0_body(F.concat([h, h_1]))
         h = self.res1_body(F.concat([h, h_2]))
         h = self.res2_body(F.concat([h, h_3]))
         h = self.res3_body(F.concat([h, h_4]))
         h = self.res4_body(F.concat([h, h_5]))
-        h = self.activation(h)
+        h = self.activation(F.concat([h, h_6]))
         output = self.l1_body(h)
 
         return output
@@ -242,7 +244,6 @@ class CBR(Chain):
             h = F.relu(self.bn(self.cpara(x)))
 
         return h
-
 
 class KeyPointDetector(Chain):
     def __init__(self, base=64):
