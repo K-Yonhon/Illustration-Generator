@@ -55,7 +55,7 @@ class Gen_ResBlock(Chain):
         return self.residual(x) + self.shortcut(x)
 
 class Generator(Chain):
-    def __init__(self, base = 64, activation = F.relu):
+    def __init__(self, base = 32, activation = F.relu):
         super(Generator, self).__init__()
 
         self.activation = activation
@@ -85,7 +85,7 @@ class Generator(Chain):
         b, _, = z.shape
 
         # Segmentation mask generation
-        h_1 = F.reshape(self.l0_seg(z), (b, 64*8, 4, 3))
+        h_1 = F.reshape(self.l0_seg(z), (b, 32*8, 4, 3))
         h_2 = self.res1_seg(h_1)
         h_3 = self.res2_seg(h_2)
         h_4 = self.res3_seg(h_3)
@@ -95,7 +95,7 @@ class Generator(Chain):
         h_seg = F.tanh(self.c0_seg(h_seg))
 
         # Illustration generation
-        h = F.reshape(self.l0_body(z), (b, 64*8 , 4, 3))
+        h = F.reshape(self.l0_body(z), (b, 32*8 , 4, 3))
         h = self.res1_body(F.concat([h, h_1]))
         h = self.res2_body(F.concat([h, h_2]))
         h = self.res3_body(F.concat([h, h_3]))
@@ -123,18 +123,12 @@ class Dis_ResBlock(Chain):
             self.c0 = L.Convolution2D(in_ch, out_ch, 3,1,1,initialW=w)
             self.c1 = L.Convolution2D(out_ch, out_ch, 3,1,1,initialW = w)
 
-            #self.bn0 = L.BatchNormalization(out_ch)
-            #self.bn1 = L.BatchNormalization(out_ch)
-
             if self.learnable_sc:
                 self.c_sc = L.Convolution2D(in_ch, out_ch, 1,1,0,initialW=w_sc)
-                #self.bn_sc = L.BatchNormalization(out_ch)
 
     def residual(self, x):
         h = self.activation(x)
-        #h = self.activation(self.bn0(self.c0(h)))
         h = self.activation(self.c0(h))
-        #h = self.bn1(self.c1(h))
         h = self.c1(h)
         if self.down:
             h = downsample(h)
@@ -143,7 +137,6 @@ class Dis_ResBlock(Chain):
 
     def shortcut(self, x):
         if self.learnable_sc:
-            #h = self.bn_sc(self.c_sc(x))
             h = self.c_sc(x)
             if self.down:
                 return downsample(h)
@@ -185,35 +178,43 @@ class OptimizedBlock(Chain):
         return self.residual(x) + self.shortcut(x)
 
 class Discriminator(Chain):
-    def __init__(self, base=64, activation = F.leaky_relu):
+    def __init__(self, base=32, activation = F.leaky_relu):
         super(Discriminator, self).__init__()
         w = initializers.GlorotUniform()
         self.activation = activation
         with self.init_scope():
-            self.c0 = Dis_ResBlock(6, base, activation=activation, down=True)
-            self.res0 = Dis_ResBlock(base, base*2, activation=activation, down=True)
-            self.res1 = Dis_ResBlock(base*2, base*4, activation=activation, down=True)
-            self.res2 = Dis_ResBlock(base*4, base*4, activation=activation, down=True)
-            self.res3 = Dis_ResBlock(base*4, base*8, activation=activation, down=True)
-            self.res4 = Dis_ResBlock(base*8, base*8, activation=activation)
-            #self.res5 = Dis_ResBlock(base*16, base*16, activation=activation, down=True)
-            #self.l0 = L.Linear(None,1024,initialW=w)
-            self.lembed=L.Linear(None,base*8,initialW=w)
-            self.l1 = L.Linear(None, 1, initialW=w)
+            self.c0_body = Dis_ResBlock(3, base, activation=activation, down=True)
+            self.res0_body = Dis_ResBlock(base*2, base*2, activation=activation, down=True)
+            self.res1_body = Dis_ResBlock(base*4, base*4, activation=activation, down=True)
+            self.res2_body = Dis_ResBlock(base*8, base*4, activation=activation, down=True)
+            self.res3_body = Dis_ResBlock(base*8, base*8, activation=activation, down=True)
+            self.res4_body = Dis_ResBlock(base*16, base*16, activation=activation)
+            self.l1_body = L.Linear(None, 1, initialW=w)
 
-            self.bn0 = L.BatchNormalization(base)
+            self.c0_seg = Dis_ResBlock(3, base, activation=activation, down=True)
+            self.res0_seg = Dis_ResBlock(base, base*2, activation=activation, down=True)
+            self.res1_seg = Dis_ResBlock(base*2, base*4, activation=activation, down=True)
+            self.res2_seg = Dis_ResBlock(base*4, base*4, activation=activation, down=True)
+            self.res3_seg = Dis_ResBlock(base*4, base*8, activation=activation, down=True)
+            self.res4_seg = Dis_ResBlock(base*8, base*8, activation=activation)
+            self.l1_seg = L.Linear(None, 1, initialW=w)
 
-    def __call__(self, x):
-        h = self.c0(x)
-        h = self.res0(h)
-        h = self.res1(h)
-        h = self.res2(h)
-        h = self.res3(h)
-        h = self.res4(h)
-        #h = self.res5(h)
+    def __call__(self, x, seg):
+        h_1 = self.c0_seg(seg)
+        h_2 = self.res0_seg(h_1)
+        h_3 = self.res1_seg(h_2)
+        h_4 = self.res2_seg(h_3)
+        h_5 = self.res3_seg(h_4)
+        #h_seg = self.l1_seg(self.activation(h_5))
+
+        h = self.c0_body(x)
+        h = self.res0_body(F.concat([h, h_1]))
+        h = self.res1_body(F.concat([h, h_2]))
+        h = self.res2_body(F.concat([h, h_3]))
+        h = self.res3_body(F.concat([h, h_4]))
+        h = self.res4_body(F.concat([h, h_5]))
         h = self.activation(h)
-        output = self.l1(h)
-        #h = self.activation(self.l0(h))
+        output = self.l1_body(h)
 
         return output
 

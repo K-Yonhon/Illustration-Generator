@@ -21,7 +21,7 @@ def prepare_dataset(filename, size = 128):
         image_orig = cv.resize(image_orig,(96,128),interpolation=cv.INTER_CUBIC)
         hflip = np.random.choice([True,False])
         if hflip:
-            image_orig = image_orig[::-1,:,:]
+            image_orig = image_orig[:,::-1,:]
         image = image_orig[:,:,::-1]
         image = image.transpose(2,0,1)
         image = (image-127.5)/127.5
@@ -66,9 +66,9 @@ generator = Generator()
 generator.to_gpu()
 gen_opt = set_optimizer(generator)
 
-segmentation_generator = Generator()
-segmentation_generator.to_gpu()
-seg_gen_opt = set_optimizer(segmentation_generator)
+#segmentation_generator = Generator()
+#segmentation_generator.to_gpu()
+#seg_gen_opt = set_optimizer(segmentation_generator)
 
 #key_point_detector = KeyPointDetector()
 #key_point_detector.to_gpu()
@@ -113,31 +113,31 @@ for epoch in range(epochs):
 
             z = chainer.as_variable(xp.random.uniform(-1,1,(batchsize,128)).astype(xp.float32))
             x, seg = generator(z)
-            fake = discriminator(F.concat([x, seg]))
-            real = discriminator(F.concat([t,s]))
+            fake = discriminator(x, seg)
+            real = discriminator(t,s)
             dis_loss = F.mean(F.softplus(-real)) + F.mean(F.softplus(fake))
 
             x.unchain_backward()
             seg.unchain_backward()
 
-            std_data = chainer.as_variable(xp.std(t.data, axis=0, keepdims = True))
-            rnd_x = chainer.as_variable(xp.random.uniform(0,1,t.shape).astype(xp.float32))
-            x_perturbed = x + 0.5 * rnd_x * std_data
+            #std_data = chainer.as_variable(xp.std(t.data, axis=0, keepdims = True))
+            #rnd_x = chainer.as_variable(xp.random.uniform(0,1,t.shape).astype(xp.float32))
+            #x_perturbed = t + 0.5 * rnd_x * std_data
 
-            y_perturbed = discriminator(F.concat([x_perturbed, s]))
-            grad, = chainer.grad([y_perturbed],[x_perturbed], enable_double_backprop=True)
-            grad = F.sqrt(F.batch_l2_norm_squared(grad))
-            loss_grad = lambda1 * F.mean_squared_error(grad, xp.ones_like(grad.data))
-            dis_loss += loss_grad
+            #y_perturbed = discriminator(x_perturbed, seg)
+            #grad, = chainer.grad([y_perturbed],[x_perturbed], enable_double_backprop=True)
+            #grad = F.sqrt(F.batch_l2_norm_squared(grad))
+            #loss_grad = lambda1 * F.mean_squared_error(grad, xp.ones_like(grad.data))
+            #dis_loss += loss_grad
 
             discriminator.cleargrads()
             dis_loss.backward()
             dis_loss.unchain_backward()
             dis_opt.update()
 
-        z = chainer.as_variable(xp.random.normal(-1, 1, (batchsize, 128)).astype(xp.float32))
+        z = chainer.as_variable(xp.random.uniform(-1, 1, (batchsize, 128)).astype(xp.float32))
         x, seg = generator(z)
-        fake = discriminator(F.concat([x, seg]))
+        fake = discriminator(x, seg)
         gen_loss = F.mean(F.softplus(-fake))
 
         generator.cleargrads()
